@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>鱼</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #020206;
+            overflow: hidden;
+            font-family: sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: rgba(255, 255, 255, 0.5);
+            pointer-events: none;
+            font-size: 14px;
+            letter-spacing: 1px;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">移动鼠标惊扰鱼群</div>
+    <canvas id="ocean"></canvas>
+
+<script>
+const canvas = document.getElementById('ocean');
+const ctx = canvas.getContext('2d');
+
+let width, height;
+let fishes =[];
+const FISH_COUNT = 15; // 鱼的数量
+
+
+const colors =[
+    { r: 180, g: 200, b: 255 }, 
+    { r: 210, g: 180, b: 255 }, 
+    { r: 140, g: 240, b: 255 }, 
+    { r: 255, g: 200, b: 220 }, 
+    { r: 255, g: 255, b: 255 }  
+];
+
+let mouse = { x: -1000, y: -1000 };
+
+
+function resize() {
+    width = canvas.width = window.innerWidth;
+    height = canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+window.addEventListener('mousemove', e => {
+    mouse.x = e.clientX;
+    mouse.y = e.clientY;
+});
+window.addEventListener('mouseleave', () => {
+    mouse.x = -1000;
+    mouse.y = -1000;
+});
+resize();
+
+
+class Vector {
+    constructor(x, y) { this.x = x; this.y = y; }
+    add(v) { this.x += v.x; this.y += v.y; }
+    sub(v) { this.x -= v.x; this.y -= v.y; return this; }
+    mult(n) { this.x *= n; this.y *= n; }
+    mag() { return Math.hypot(this.x, this.y); }
+    normalize() {
+        let m = this.mag();
+        if (m !== 0) { this.mult(1 / m); }
+        return this;
+    }
+    limit(max) {
+        if (this.mag() > max) {
+            this.normalize();
+            this.mult(max);
+        }
+    }
+    static dist(v1, v2) { return Math.hypot(v1.x - v2.x, v1.y - v2.y); }
+}
+
+
+class Fish {
+    constructor() {
+        this.pos = new Vector(Math.random() * width, Math.random() * height);
+        this.vel = new Vector(Math.random() * 2 - 1, Math.random() * 2 - 1);
+        this.acc = new Vector(0, 0);
+        
+        this.size = Math.random() * 2 + 2;
+        this.maxSpeed = Math.random() * 1.5 + 2; 
+        this.maxForce = 0.05; 
+        
+      
+        this.history =[];
+        this.historyLength = Math.floor(Math.random() * 5 + 15);
+        
+     
+        const baseColor = colors[Math.floor(Math.random() * colors.length)];
+        this.colorStr = `rgba(${baseColor.r}, ${baseColor.g}, ${baseColor.b}, 1)`;
+        this.glowColor = `rgba(${baseColor.r}, ${baseColor.g}, ${baseColor.b}, 0.8)`;
+    }
+
+    flock(fishes) {
+        let sep = new Vector(0, 0);
+        let ali = new Vector(0, 0); 
+        let coh = new Vector(0, 0); 
+        
+        let sepCount = 0, aliCount = 0, cohCount = 0;
+        const sepRadius = 30, perception = 80;
+
+        
+        for (let other of fishes) {
+            let d = Vector.dist(this.pos, other.pos);
+            if (d > 0 && d < sepRadius) {
+                let diff = new Vector(this.pos.x, this.pos.y).sub(other.pos);
+                diff.normalize();
+                diff.mult(1 / d);
+                sep.add(diff);
+                sepCount++;
+            }
+            if (d > 0 && d < perception) {
+                ali.add(other.vel);
+                aliCount++;
+                coh.add(other.pos);
+                cohCount++;
+            }
+        }
+
+        if (sepCount > 0) { sep.mult(1 / sepCount); sep.normalize(); sep.mult(this.maxSpeed); sep.sub(this.vel); sep.limit(this.maxForce * 1.5); }
+        if (aliCount > 0) { ali.mult(1 / aliCount); ali.normalize(); ali.mult(this.maxSpeed); ali.sub(this.vel); ali.limit(this.maxForce); }
+        if (cohCount > 0) { coh.mult(1 / cohCount); coh.sub(this.pos); coh.normalize(); coh.mult(this.maxSpeed); coh.sub(this.vel); coh.limit(this.maxForce); }
+
+       
+        let mouseVec = new Vector(mouse.x, mouse.y);
+        let dMouse = Vector.dist(this.pos, mouseVec);
+        let avoidMouse = new Vector(0, 0);
+        if (dMouse < 150) {
+            avoidMouse = new Vector(this.pos.x, this.pos.y).sub(mouseVec);
+            avoidMouse.normalize();
+            avoidMouse.mult(this.maxSpeed);
+            avoidMouse.sub(this.vel);
+            avoidMouse.limit(this.maxForce * 4); 
+        }
+
+       
+        let margin = 100;
+        let turn = new Vector(0, 0);
+        if (this.pos.x < margin) turn.x = this.maxForce * 2;
+        if (this.pos.x > width - margin) turn.x = -this.maxForce * 2;
+        if (this.pos.y < margin) turn.y = this.maxForce * 2;
+        if (this.pos.y > height - margin) turn.y = -this.maxForce * 2;
+
+        
+        sep.mult(1.5);
+        ali.mult(1.0);
+        coh.mult(1.0);
+        turn.mult(2.0);
+
+        this.acc.add(sep);
+        this.acc.add(ali);
+        this.acc.add(coh);
+        this.acc.add(avoidMouse);
+        this.acc.add(turn);
+    }
+
+    update() {
+        this.vel.add(this.acc);
+        this.vel.limit(this.maxSpeed);
+        this.pos.add(this.vel);
+        this.acc.mult(0); 
+
+      
+        this.history.unshift({ x: this.pos.x, y: this.pos.y });
+        if (this.history.length > this.historyLength) {
+            this.history.pop();
+        }
+    }
+
+    draw() {
+        if (this.history.length < 2) return;
+
+       
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = this.glowColor;
+        ctx.fillStyle = this.colorStr;
+
+       
+        for (let i = 0; i < this.history.length; i++) {
+            let p = this.history[i];
+            
+    
+            let progress = i / this.history.length;
+            let radius = this.size * (1 - progress) * (1 + Math.sin(progress * Math.PI));
+            
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, Math.max(0.1, radius), 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        if (this.history.length > 5) {
+            let angle = Math.atan2(this.vel.y, this.vel.x);
+            let p = this.history[3]; 
+            let finDist = this.size * 2;
+            
+            ctx.fillStyle = 'rgba(255,255,255,0.6)';
+            ctx.shadowBlur = 5;
+            
+            ctx.beginPath();
+            ctx.arc(p.x + Math.cos(angle + Math.PI/2) * finDist, p.y + Math.sin(angle + Math.PI/2) * finDist, this.size*0.3, 0, Math.PI*2);
+            ctx.fill();
+            
+            ctx.beginPath();
+            ctx.arc(p.x + Math.cos(angle - Math.PI/2) * finDist, p.y + Math.sin(angle - Math.PI/2) * finDist, this.size*0.3, 0, Math.PI*2);
+            ctx.fill();
+        }
+
+      
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.shadowBlur = 0;
+    }
+}
+
+
+const flares =[
+    { x: 0.8, y: 0.2, color: 'rgba(255, 100, 100, 0.1)', r: 300 },
+    { x: 0.9, y: 0.8, color: 'rgba(100, 150, 255, 0.15)', r: 400 },
+    { x: 0.3, y: 0.5, color: 'rgba(200, 100, 255, 0.08)', r: 500 }
+];
+
+function drawBackground() {
+    ctx.fillStyle = '#020206';
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.globalCompositeOperation = 'lighter';
+    flares.forEach(f => {
+        let gradient = ctx.createRadialGradient(width * f.x, height * f.y, 0, width * f.x, height * f.y, f.r);
+        gradient.addColorStop(0, f.color);
+        gradient.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, width, height);
+    });
+    ctx.globalCompositeOperation = 'source-over';
+}
+
+
+for (let i = 0; i < FISH_COUNT; i++) {
+    fishes.push(new Fish());
+}
+
+
+function animate() {
+    drawBackground();
+
+    for (let fish of fishes) {
+        fish.flock(fishes);
+        fish.update();
+        fish.draw();
+    }
+
+    requestAnimationFrame(animate);
+}
+
+animate();
+</script>
+</body>
+</html>
